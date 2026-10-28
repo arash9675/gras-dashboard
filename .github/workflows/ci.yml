@@ -37,3 +37,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker build -f app/Dockerfile -t gras-app .
+
+  # Start the whole stack the way a reviewer would, from a clean checkout and
+  # without an Earth Engine key, and check the dashboard comes up with results.
+  reviewer-start:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: docker compose up with only the example settings
+        run: |
+          cp .env.example .env
+          mkdir -p secrets
+          docker compose up -d --build
+          for i in $(seq 1 60); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' "$(docker compose ps -q app)")" = healthy ] && break
+            sleep 5
+          done
+          curl -fsS http://localhost:8501/_stcore/health
+          test "$(docker compose exec -T db psql -U gras -d gras -At -c 'SELECT COUNT(*) FROM v_stats')" = 172
+      - if: always()
+        run: docker compose logs app | tail -40

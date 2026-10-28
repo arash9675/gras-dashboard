@@ -270,3 +270,12 @@ Groq. It is called with plain `httpx` (already installed with the Gemini SDK)
 rather than another client library.
 *Trade-off:* Groq's free tier allows few tokens per minute, so it suits a
 fallback, not the main model; answers may differ in style between the two.
+
+### 36. Ship one set of results with the repo
+`data/reference_results.json` holds the results of one real extraction run for
+the 198 reference polygons. On first start, if the reference set has no
+results, they are loaded as an ordinary run (same assets and method, with a
+note saying where it came from). A reviewer can then use every page without an
+Earth Engine key; uploads and recalculation still need one.
+*Trade-off:* 82 KB of data in the repo, and the shipped numbers reflect the
+dataset versions of that run until someone recalculates.

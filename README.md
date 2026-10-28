@@ -8,6 +8,10 @@ and what can each one safely be used for?
 Stack: PostgreSQL 16 + PostGIS · Google Earth Engine · Streamlit with Google Material 3 styling ·
 MapLibre GL + OpenStreetMap · Plotly · Docker Compose.
 
+**Live demo:** <https://difference-totals-marilyn-lafayette.trycloudflare.com>. It runs on my own small
+server behind a free Cloudflare tunnel, so the address changes if the tunnel restarts; if it does not
+open, ask me for the current one, or run it locally as below.
+
 | Document | What is in it |
 |---|---|
 | [docs/architecture.md](docs/architecture.md) | Components, code layout, every module, data flows, database objects |
@@ -16,17 +20,26 @@ MapLibre GL + OpenStreetMap · Plotly · Docker Compose.
 
 ## Quick start
 
+**Without any keys** (the quickest way to look at it):
+
 ```bash
-cp .env.example .env              # set EE_PROJECT and POSTGRES_PASSWORD (GEMINI_API_KEY optional)
-mkdir -p secrets
-cp /path/to/key.json secrets/ee-service-account.json
+cp .env.example .env
 docker compose up -d --build
-# open http://localhost:8501
+# open http://localhost:8501 (ready about a minute after the build)
 ```
 
-On first start the app creates the schema, imports the reference polygons, fits the location
-clusters and runs the Earth Engine extraction (a few seconds). Without Earth Engine access the
-dashboard still starts and shows the polygons.
+On first start the app creates the schema, imports the 198 reference polygons, fits the location
+clusters and loads the Earth Engine results that ship with the repo (`data/reference_results.json`,
+one real extraction run, stored with its assets and method). Every page then works for the reference
+set. What needs an Earth Engine key: uploading your own polygons, recalculating, and the optional
+dataset layers on the map. Ask Gemini needs a Gemini key and otherwise says how to enable it.
+
+**With Earth Engine** (to upload polygons or recalculate): set `EE_PROJECT` in `.env`, put the
+service-account key at `secrets/ee-service-account.json` (setup below), then `docker compose up -d --build`.
+Change `POSTGRES_PASSWORD` in `.env` for anything beyond a local look.
+
+A GitHub Actions job starts the stack exactly like this, from a clean checkout with only `.env.example`,
+on every push, and checks that the dashboard comes up with results.
 
 ### Earth Engine access
 
@@ -124,7 +137,7 @@ app/
   ui/          Material theme, page state and filters, map component
   views/       one script per page
 db/init.sql    the whole schema (tables, views, insight queries, read-only role), safe to rerun
-data/          reference GeoJSON
+data/          reference GeoJSON and its saved Earth Engine results
 docs/          architecture, design decisions, analysis
 tests/         unit tests, and database tests for a throwaway PostGIS
 ops/backup.sh  nightly database dump
@@ -164,11 +177,34 @@ A stratified sample of reference points, including non-forest, per cluster would
 - The 50% threshold for polygon categories is a presentation choice; all shares are stored unrounded.
 - The assistant explains results but can still word things loosely; its number check flags figures not
   found in the tool results, and every answer shows its rows, but it is a guide, not a source.
-- Served over plain HTTP; put it behind HTTPS (for example a Cloudflare Tunnel or Caddy) before wider use.
+- On the first visit to a deep link (for example `/map`) after a restart, Streamlit shows a "Page not
+  found" pop-up once; it disappears on the next visit.
+
+## Production risks
+
+What would need work before this ran as a product rather than a demonstrator:
+
+- **One small server.** The demo runs on a 1 GB VM; building an image there slows the live site. Builds
+  belong in CI, with the server only pulling a finished image.
+- **No login.** Anyone with the link can upload polygons, which uses the Earth Engine quota. Uploads are
+  capped (2,000 polygons, 10 MB, last 5 kept), but a product needs sign-in.
+- **Temporary address.** The free Cloudflare quick tunnel gives a new URL after a restart; a fixed domain
+  is needed.
+- **Earth Engine dependence.** Uploads and recalculation stop when Earth Engine or its quota does; stored
+  results keep the pages working.
+- **The assistant on free tiers.** Gemini's free tier is often overloaded and models are retired with
+  little notice (2.5 Flash closed to new keys during this work), so it falls back to a lighter model and
+  then to Groq. Free-tier prompts may be used for training, which rules out private data. A product would
+  need a paid key or Vertex AI, a pinned model version, and an evaluation set of known questions run on
+  every prompt or model change.
+- **Assistant wording.** Answers are grounded in fixed queries and their numbers are checked against the
+  returned rows, but the model can still phrase things loosely; the trace under each answer is the source.
+- **Backups on the same disk.** Nightly dumps (`ops/backup.sh`) stay on the server; they should also go
+  off-site.
 
 ## Open questions and next steps
 
-Questions we could not settle from the data:
+Questions I could not settle from the data:
 
 - **The 2026 polygon.** One polygon is dated 2026 while the rest are 2021-2024. A typo, or a newer label?
 - **How the polygons were drawn.** Which imagery, which minimum size, and whether "Verified" means
@@ -178,7 +214,7 @@ Questions we could not settle from the data:
 - **No treeless reference points.** The polygons only show where trees were. Measuring how often a map
   calls forest where there is none needs reference points in stable non-forest.
 
-Trade-offs we made are listed with their reasons in [docs/design-decisions.md](docs/design-decisions.md).
+Trade-offs I made are listed with their reasons in [docs/design-decisions.md](docs/design-decisions.md).
 
 Next steps:
 

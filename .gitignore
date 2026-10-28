@@ -6,3 +6,4 @@ __pycache__/
 .cache/
 .DS_Store
 backups/
+!data/reference_results.json

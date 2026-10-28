@@ -61,7 +61,7 @@ app/
   views/                  one script per page (start, map, insights, assistant, dashboards,
                           overview, compare, polygons, findings, about)
 db/init.sql               the whole schema: tables, views, insight queries, read-only role
-data/                     the reference GeoJSON
+data/                     the reference GeoJSON and its saved Earth Engine results
 tests/                    unit tests; database tests for a throwaway PostGIS
 ops/backup.sh             nightly pg_dump, 14 days kept
 .github/workflows/ci.yml  lint, tests, image build
@@ -108,7 +108,8 @@ without a key.
 1. Wait for Postgres, then run `db/init.sql`. It is idempotent, so this also
    updates views on an existing database.
 2. `pipeline.startup`: if there is no pinned set, import `data/*.geojson` as the
-   reference set; if there is no cluster model, fit one on it.
+   reference set; if there is no cluster model, fit one on it; if the reference set has
+   no results, load the saved ones from `data/reference_results.json`.
 3. `pipeline.extraction`: compute results for every set that has none.
 4. Start Streamlit.
 

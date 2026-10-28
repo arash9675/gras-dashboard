@@ -60,3 +60,17 @@ def test_region_from_location():
     assert ps.detect_region(32.0, -0.5) == "uganda"
     assert ps.detect_region(-45.0, -20.0) == "brazil"
     assert ps.detect_region(10.0, 50.0) == "other"
+
+
+def test_saved_reference_results_match_the_polygons(reference_geojson):
+    from pathlib import Path
+    saved = json.loads((Path(__file__).resolve().parents[1] / "data" / "reference_results.json").read_text())
+    n = len(json.loads(reference_geojson)["features"])
+    rows = saved["results"]
+    assert sorted(r["feature_index"] for r in rows) == list(range(n))
+    shares = ["gfc_forest", "forty_primary", "forty_natreg", "forty_planted", "forty_plantation",
+              "forty_treecrops", "forty_other", "x_ff", "x_fn", "x_nf", "x_nn"]
+    for r in rows:
+        assert all(0 <= r[c] <= 1.000001 for c in shares if r[c] is not None)
+        if r["gfc_forest"] is not None:
+            assert abs(r["x_ff"] + r["x_fn"] + r["x_nf"] + r["x_nn"] - 1) < 1e-6
