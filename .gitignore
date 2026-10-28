@@ -1,0 +1,8 @@
+.env
+secrets/
+*.json
+__pycache__/
+*.pyc
+.cache/
+.DS_Store
+backups/

@@ -1,0 +1,175 @@
+<!doctype html>
+<!--
+  Streamlit custom component: open-source map (MapLibre GL JS + OpenStreetMap).
+  Talks to Streamlit with the plain component protocol (postMessage), so it
+  needs no build step.
+
+  Behaviour
+  - Fits the view to the polygons whenever `fit_key` changes (a filter changed);
+    otherwise the user's zoom and pan are kept.
+  - Flies to a polygon when `select_key` changes (picked outside the map).
+  - Clicking a polygon or marker sends {id, nonce} back to Python.
+  - Draws one optional Earth Engine raster (`layer`) under the polygons; it shows
+    from its minzoom on, since whole-continent tiles of a 10 m map are a blur.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<style>
+  html, body {margin: 0; padding: 0; font-family: Roboto, Arial, sans-serif;}
+  #wrap {position: relative; border-radius: 16px; overflow: hidden; border: 1px solid #DADCE0;}
+  #map {width: 100%;}
+  .fab {position: absolute; left: 12px; bottom: 30px; z-index: 2; background: #fff; border: 0; border-radius: 12px;
+        height: 40px; padding: 0 14px; font: 500 13px Roboto, Arial; color: #1A73E8; cursor: pointer;
+        box-shadow: 0 1px 3px rgba(60,64,67,.3), 0 4px 8px 3px rgba(60,64,67,.15);}
+  .maplibregl-popup-content {border-radius: 12px; font: 13px Roboto, Arial; padding: 10px 12px;
+                             box-shadow: 0 1px 3px rgba(60,64,67,.3), 0 4px 8px 3px rgba(60,64,67,.15);}
+  .maplibregl-ctrl-group {border-radius: 12px !important;}
+  .zoomchip {position: absolute; top: 12px; right: 12px; z-index: 2; display: none; font-size: 12px; color: #3C4043;
+              background: #fff; border-radius: 8px; padding: 6px 10px; box-shadow: 0 1px 3px rgba(60,64,67,.3);}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="map"></div>
+  <div class="zoomchip" id="zoomnote">Zoom in to see the dataset layer</div>
+  <button class="fab" id="fit" title="Zoom to the selected polygons">⤢ Fit to polygons</button>
+</div>
+<script>
+const send = (type, extra) => window.parent.postMessage(Object.assign({isStreamlitMessage: true, type}, extra), "*");
+let map = null, ready = false, args = null;
+// Keep fitted polygons clear of the zoom buttons (top left) and the fit button (bottom left).
+const PAD = {top: 50, bottom: 60, left: 60, right: 50};
+let lastFit = null, lastSel = null, lastLayer = null, popup = null, bounds = null;
+
+function centroids(fc) {
+  return {type: "FeatureCollection", features: fc.features.map(f => ({
+    type: "Feature", properties: f.properties,
+    geometry: {type: "Point", coordinates: f.properties.c}}))};
+}
+
+function buildMap(a) {
+  document.getElementById("map").style.height = a.height + "px";
+  map = new maplibregl.Map({
+    container: "map", attributionControl: {compact: true},
+    style: {version: 8,
+      sources: {
+        osm: {type: "raster", tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"], tileSize: 256,
+              maxzoom: 19, attribution: "© OpenStreetMap contributors"},
+        sat: {type: "raster", tileSize: 256, maxzoom: 19, attribution: "Imagery © Esri, Maxar, Earthstar Geographics",
+              tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"]}},
+      layers: [{id: "osm", type: "raster", source: "osm"},
+               {id: "sat", type: "raster", source: "sat", layout: {visibility: "none"}}]},
+    bounds: a.bounds, fitBoundsOptions: {padding: PAD, maxZoom: 15}, maxZoom: 20,
+  });
+  map.addControl(new maplibregl.NavigationControl({visualizePitch: false}), "top-left");
+  map.addControl(new maplibregl.ScaleControl({unit: "metric"}), "bottom-right");
+  map.on("error", e => { window.__errs = (window.__errs || []).concat(String(e.error && e.error.message || e)); });
+  // Set up on style load, not "load": "load" waits for a drawn frame, which hidden tabs never draw.
+  map.once("style.load", () => { try {
+    map.on("zoomend", updateZoomNote);
+    map.addSource("polys", {type: "geojson", data: a.polygons});
+    map.addSource("pts", {type: "geojson", data: centroids(a.polygons)});
+    map.addLayer({id: "poly-fill", type: "fill", source: "polys", minzoom: 11,
+      paint: {"fill-color": ["get", "color"], "fill-opacity": 0.35}});
+    // line-dasharray cannot depend on data, so sub-pixel polygons get their own dashed layer.
+    map.addLayer({id: "poly-line", type: "line", source: "polys", minzoom: 11, filter: ["!", ["get", "tiny"]],
+      paint: {"line-color": ["get", "color"], "line-width": 2}});
+    map.addLayer({id: "poly-line-tiny", type: "line", source: "polys", minzoom: 11, filter: ["get", "tiny"],
+      paint: {"line-color": ["get", "color"], "line-width": 2, "line-dasharray": [2, 2]}});
+    map.addLayer({id: "poly-sel", type: "line", source: "polys", filter: ["==", ["get", "id"], -1],
+      paint: {"line-color": "#FFFFFF", "line-width": 4}});
+    map.addLayer({id: "pts", type: "circle", source: "pts", maxzoom: 15,
+      paint: {"circle-radius": ["interpolate", ["linear"], ["zoom"], 3, ["case", ["get", "tiny"], 3, 4.5],
+                                 12, ["case", ["get", "tiny"], 4, 7]],
+              "circle-color": ["get", "color"], "circle-opacity": ["case", ["get", "tiny"], 0.55, 0.95],
+              "circle-stroke-color": "#fff", "circle-stroke-width": 1.5}});
+    map.addLayer({id: "pts-sel", type: "circle", source: "pts", filter: ["==", ["get", "id"], -1],
+      paint: {"circle-radius": 10, "circle-color": "rgba(0,0,0,0)", "circle-stroke-color": "#1F1F1F",
+              "circle-stroke-width": 3}});
+    for (const id of ["poly-fill", "pts"]) {
+      map.on("click", id, e => {
+        const p = e.features[0].properties;
+        send("streamlit:setComponentValue", {value: {id: p.id, nonce: Date.now()}, dataType: "json"});
+      });
+      map.on("mouseenter", id, e => {
+        map.getCanvas().style.cursor = "pointer";
+        const p = e.features[0].properties;
+        popup = new maplibregl.Popup({closeButton: false, offset: 10}).setLngLat(e.lngLat).setHTML(p.tip).addTo(map);
+      });
+      map.on("mouseleave", id, () => { map.getCanvas().style.cursor = ""; if (popup) popup.remove(); });
+    }
+    ready = true;
+    // Filters may have changed while the map was loading: fit to the latest polygons.
+    map.resize();
+    if (args.bounds) map.fitBounds(args.bounds, {padding: PAD, maxZoom: 15, duration: 0});
+    lastFit = args.fit_key;
+    apply(args, true);
+    } catch (err) { window.__errs = (window.__errs || []).concat("load: " + err + " " + err.stack); console.error(err); }
+  });
+  document.getElementById("fit").addEventListener("click", () => {
+    if (bounds) map.fitBounds(bounds, {padding: PAD, maxZoom: 15});
+  });
+}
+
+function setBasemap(a) {
+  const sat = a.basemap === "sat";
+  map.setLayoutProperty("osm", "visibility", sat ? "none" : "visible");
+  map.setLayoutProperty("sat", "visibility", sat ? "visible" : "none");
+}
+
+function setLayer(a) {
+  // One optional Earth Engine raster under the polygons; null means none.
+  const l = a.layer || null;
+  const key = l ? l.url : null;
+  if (key === lastLayer) return;
+  lastLayer = key;
+  if (map.getLayer("ee")) map.removeLayer("ee");
+  if (map.getSource("ee")) map.removeSource("ee");
+  if (l) {
+    map.addSource("ee", {type: "raster", tiles: [l.url], tileSize: 256, attribution: l.attribution || ""});
+    map.addLayer({id: "ee", type: "raster", source: "ee", minzoom: l.minzoom || 0,
+                  paint: {"raster-opacity": l.opacity || 0.75}}, "poly-fill");
+  }
+  updateZoomNote();
+}
+
+function updateZoomNote() {
+  const l = args && args.layer;
+  document.getElementById("zoomnote").style.display = (map && l && map.getZoom() < (l.minzoom || 0)) ? "block" : "none";
+}
+
+function apply(a, first) {
+  if (!ready) return;
+  map.getSource("polys").setData(a.polygons);
+  map.getSource("pts").setData(centroids(a.polygons));
+  setBasemap(a);
+  setLayer(a);
+  const selFilter = ["==", ["get", "id"], a.selected == null ? -1 : a.selected];
+  map.setFilter("poly-sel", selFilter);
+  map.setFilter("pts-sel", selFilter);
+  bounds = a.bounds;
+  if (a.fit_key !== lastFit) {
+    lastFit = a.fit_key;
+    if (!first && a.bounds) map.fitBounds(a.bounds, {padding: PAD, maxZoom: 15, duration: 700});
+  }
+  if (a.select_key !== lastSel) {
+    lastSel = a.select_key;
+    if (a.selected != null && a.focus) map.flyTo({center: a.focus, zoom: 17, duration: 900});
+  }
+}
+
+window.addEventListener("message", ev => {
+  if (!ev.data || ev.data.type !== "streamlit:render") return;
+  args = ev.data.args;
+  if (!map) { buildMap(args); lastFit = args.fit_key; }  // the map opens fitted; a preselected polygon flies on load
+  else apply(args, false);
+  send("streamlit:setFrameHeight", {height: args.height + 2});
+});
+send("streamlit:componentReady", {apiVersion: 1});
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+# Google Material 3 colours (Google blue primary, neutral surfaces).
+[theme]
+base = "light"
+primaryColor = "#1A73E8"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F8FAFD"
+textColor = "#1F1F1F"
+font = "sans serif"
+
+[client]
+toolbarMode = "minimal"
+
+[server]
+headless = true
+maxUploadSize = 10

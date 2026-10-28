@@ -1,0 +1,11 @@
+# Keep secrets and local clutter out of the image; credentials are mounted at run time.
+.env
+secrets/
+.git/
+docs/
+tests/
+.github/
+**/__pycache__/
+**/*.pyc
+backups/
+ops/

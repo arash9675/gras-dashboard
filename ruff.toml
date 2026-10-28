@@ -1,0 +1,9 @@
+line-length = 120
+target-version = "py311"
+
+[lint]
+select = ["E", "F", "W", "I", "B"]
+ignore = ["E501"]   # long SQL and markdown strings read better unwrapped
+
+[lint.isort]
+known-first-party = ["core", "pipeline", "analytics", "ui", "assistant", "conftest"]

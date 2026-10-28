@@ -1,0 +1,52 @@
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-gras}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-gras}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - gras-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-gras} -d ${POSTGRES_DB:-gras}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # Small-footprint settings (runs on a 1 GB VPS)
+    command: >
+      postgres
+      -c shared_buffers=64MB
+      -c effective_cache_size=256MB
+      -c work_mem=4MB
+      -c maintenance_work_mem=16MB
+      -c max_connections=20
+    restart: unless-stopped
+
+  app:
+    build:
+      context: .
+      dockerfile: app/Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-gras}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-gras}
+      EE_PROJECT: ${EE_PROJECT:-}
+      EE_SERVICE_ACCOUNT_JSON: /secrets/ee-service-account.json
+      EE_CREDENTIALS_JSON: ${EE_CREDENTIALS_JSON:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-}
+      GEOJSON_PATH: /data/gold_deforestation_labels.geojson
+      SCHEMA_PATH: /db/init.sql
+      PYTHONUNBUFFERED: "1"
+    ports:
+      - "${APP_PORT:-8501}:8501"
+    volumes:
+      - ./secrets:/secrets:ro
+    restart: unless-stopped
+
+volumes:
+  gras-db-data:
